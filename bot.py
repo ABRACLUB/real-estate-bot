@@ -14,7 +14,7 @@ from telegram.ext import (
 )
 from telegram.error import BadRequest
 
-BOT_TOKEN = "8691313667:AAFtI9CUFia_Ew2_3vXLJ7Zivgy1C7Yzx0s"
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
 CHANNEL   = "@zats_denis"
 DB_FILE   = "properties.json"
 
@@ -444,28 +444,41 @@ async def send_results(q, results):
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Новый поиск", callback_data="search")]])
         )
         return
-    text = "Найдено: {} объект(ов)\n\n".format(len(results))
-    kb = []
-    for p in results[:15]:
+
+    # Send each property as a separate message with link right under description
+    await safe_edit(q, "Найдено: {} объект(ов)".format(len(results)),
+                    reply_markup=None)
+
+    chat_id = q.message.chat_id
+    shown = results[:15]
+
+    for p in shown:
         beds = ", ".join("студия" if b == 0 else str(b) + " сп." for b in p.get("bedrooms", []))
-        text += (
-            p["title"] + "\n"
-            + p.get("city", "") + (", " + p.get("district", "") if p.get("district") else "") + "\n"
-            + "Спальни: " + beds + "\n"
-            + "Цена: от " + fmt(p["price_from"]) + "\n"
-            + "Ключи: " + p.get("ready", "") + "\n\n"
+        location = p.get("city", "")
+        if p.get("district"):
+            location += ", " + p["district"]
+        text = (
+            "🏠 <b>" + p["title"] + "</b>\n"
+            + "📍 " + location + "\n"
+            + "🛏 Спальни: " + beds + "\n"
+            + "💰 Цена: от " + fmt(p["price_from"]) + "\n"
+            + "🗓 Ключи: " + p.get("ready", "—") + "\n"
+            + "\n🔗 <a href=\"" + p["link"] + "\">Открыть объект</a>"
         )
-        short = p["title"][:38] + ("..." if len(p["title"]) > 38 else "")
-        kb.append([InlineKeyboardButton("Открыть: " + short, url=p["link"])])
+        try:
+            await q.message.chat.send_message(text, parse_mode="HTML", disable_web_page_preview=True)
+        except Exception:
+            pass
+
     if len(results) > 15:
-        text += "...и ещё {} объектов. Уточните фильтры.\n".format(len(results) - 15)
-    kb.append([
-        InlineKeyboardButton("Новый поиск", callback_data="search"),
-        InlineKeyboardButton("Все объекты", callback_data="all"),
-    ])
-    if len(text) > 4000:
-        text = text[:4000] + "\n...(показаны не все)"
-    await safe_edit(q, text, reply_markup=InlineKeyboardMarkup(kb))
+        extra = "...и ещё {} объектов. Уточните фильтры.".format(len(results) - 15)
+        await q.message.chat.send_message(extra)
+
+    kb = [[
+        InlineKeyboardButton("🔍 Новый поиск", callback_data="search"),
+        InlineKeyboardButton("📋 Все объекты", callback_data="all"),
+    ]]
+    await q.message.chat.send_message("Что дальше?", reply_markup=InlineKeyboardMarkup(kb))
 
 async def cancel(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Отменено. /start — начать заново")
