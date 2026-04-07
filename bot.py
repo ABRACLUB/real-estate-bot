@@ -14,7 +14,7 @@ from telegram.ext import (
 )
 from telegram.error import BadRequest
 
-BOT_TOKEN = "8691313667:AAFtI9CUFia_Ew2_3vXLJ7Zivgy1C7Yzx0s"
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
 CHANNEL   = "@zats_denis"
 DB_FILE   = "properties.json"
 
@@ -482,13 +482,17 @@ def main():
             S_BEDROOMS: [CallbackQueryHandler(got_bedrooms, pattern="^bed_")],
             S_PRICE:    [CallbackQueryHandler(got_price,    pattern="^price_")],
         },
-        fallbacks=[CommandHandler("cancel", cancel)],
+        fallbacks=[
+            CommandHandler("cancel", cancel),
+            CommandHandler("start", start),
+            CallbackQueryHandler(search_start, pattern="^search$"),
+        ],
     )
+    app.add_handler(conv)  # ConversationHandler must be first
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(show_all, pattern="^all$"))
     app.add_handler(CallbackQueryHandler(do_sync,  pattern="^sync$"))
     app.add_handler(CallbackQueryHandler(back,     pattern="^back$"))
-    app.add_handler(conv)
     print("Бот запущен. Объектов в базе: {}".format(len(PROPERTIES)))
     app.run_polling()
 
