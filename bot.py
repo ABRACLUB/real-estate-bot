@@ -13,7 +13,7 @@ from telegram.ext import (
     ContextTypes, ConversationHandler
 )
 
-BOT_TOKEN = "8691313667:AAFtI9CUFia_Ew2_3vXLJ7Zivgy1C7Yzx0s"
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
 CHANNEL   = "zats_denis"
 DB_FILE   = "properties.json"
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
@@ -62,6 +62,56 @@ DEFAULT_PROPERTIES = [
         "link": "https://t.me/zats_denis/1005",
         "desc": "6 вилл, холмы, вид на море. 10 мин до центра"
     },
+    {
+        "id": 2001,
+        "title": "Апартаменты у моря в Пафосе",
+        "city": "Пафос", "district": "Като Пафос",
+        "type": "апартаменты", "bedrooms": [1, 2],
+        "price_from": 195000, "price_to": 380000,
+        "ready": "Q4/2026",
+        "link": "https://t.me/zats_denis/2001",
+        "desc": "1 сп от 195k, 2 сп от 280k евро. Рядом с набережной"
+    },
+    {
+        "id": 2002,
+        "title": "Вилла с бассейном в Пафосе",
+        "city": "Пафос", "district": "Хлорака",
+        "type": "вилла", "bedrooms": [3, 4],
+        "price_from": 650000, "price_to": 1200000,
+        "ready": "Готово",
+        "link": "https://t.me/zats_denis/2002",
+        "desc": "3 сп от 650k, 4 сп от 950k евро. Панорамный вид на море"
+    },
+    {
+        "id": 3001,
+        "title": "Апартаменты в центре Никосии",
+        "city": "Никосия", "district": "Центр",
+        "type": "апартаменты", "bedrooms": [1, 2, 3],
+        "price_from": 150000, "price_to": 420000,
+        "ready": "Q1/2027",
+        "link": "https://t.me/zats_denis/3001",
+        "desc": "1 сп от 150k, 2 сп от 240k, 3 сп от 350k евро. Деловой центр"
+    },
+    {
+        "id": 4001,
+        "title": "Апартаменты у пляжа в Ларнаке",
+        "city": "Ларнака", "district": "Финикудес",
+        "type": "апартаменты", "bedrooms": [0, 1, 2],
+        "price_from": 120000, "price_to": 320000,
+        "ready": "Q2/2027",
+        "link": "https://t.me/zats_denis/4001",
+        "desc": "Студия от 120k, 1 сп от 175k, 2 сп от 260k евро. Первая линия"
+    },
+    {
+        "id": 4002,
+        "title": "Таунхаус в Ларнаке",
+        "city": "Ларнака", "district": "Арадиппу",
+        "type": "таунхаус", "bedrooms": [2, 3],
+        "price_from": 280000, "price_to": 450000,
+        "ready": "Q3/2026",
+        "link": "https://t.me/zats_denis/4002",
+        "desc": "2 сп от 280k, 3 сп от 380k евро. Тихий район, рядом аэропорт"
+    },
 ]
 
 def load_properties():
@@ -90,9 +140,9 @@ def match(prop, f):
     beds = f.get("bedrooms")
     if beds is not None and beds != -1 and beds not in prop.get("bedrooms", []):
         return False
-    if f.get("price_max") and prop.get("price_from", 0) > f["price_max"]:
+    if f.get("price_max") is not None and f["price_max"] != 999999999 and prop.get("price_from", 0) > f["price_max"]:
         return False
-    if f.get("price_min") and prop.get("price_to", 9999999) < f["price_min"]:
+    if f.get("price_min") is not None and f["price_min"] > 0 and prop.get("price_to", 999999999) < f["price_min"]:
         return False
     return True
 
@@ -164,8 +214,12 @@ async def ask_type(q):
 
 async def got_type(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; await q.answer()
-    ctx.user_data["filters"]["type"] = q.data.replace("type_", "")
-    cities = uniq("city")
+    chosen_type = q.data.replace("type_", "")
+    ctx.user_data["filters"]["type"] = chosen_type
+    if chosen_type and chosen_type != "любой":
+        cities = sorted(set(p["city"] for p in PROPERTIES if p.get("city") and p.get("type") == chosen_type))
+    else:
+        cities = uniq("city")
     kb = [[InlineKeyboardButton(c, callback_data="city_{}".format(c))] for c in cities]
     kb.append([InlineKeyboardButton("Любой город", callback_data="city_любой")])
     await q.edit_message_text("Город:", reply_markup=InlineKeyboardMarkup(kb))
@@ -175,10 +229,14 @@ async def got_city(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; await q.answer()
     val = q.data.replace("city_", "")
     ctx.user_data["filters"]["city"] = val
-    chosen = val if val != "любой" else None
+    chosen_city = val if val != "любой" else None
+    chosen_type = ctx.user_data["filters"].get("type")
+    chosen_type = chosen_type if chosen_type and chosen_type != "любой" else None
     districts = sorted(set(
         p["district"] for p in PROPERTIES
-        if p.get("district") and (not chosen or p.get("city") == chosen)
+        if p.get("district")
+        and (not chosen_city or p.get("city") == chosen_city)
+        and (not chosen_type or p.get("type") == chosen_type)
     ))
     kb = [[InlineKeyboardButton(d, callback_data="dist_{}".format(d))] for d in districts]
     kb.append([InlineKeyboardButton("Любой район", callback_data="dist_любой")])
@@ -207,8 +265,8 @@ async def got_bedrooms(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("200k - 400k евро",    callback_data="price_200000_400000")],
         [InlineKeyboardButton("400k - 700k евро",    callback_data="price_400000_700000")],
         [InlineKeyboardButton("700k - 1.5М евро",    callback_data="price_700000_1500000")],
-        [InlineKeyboardButton("от 1.5М евро",        callback_data="price_1500000_99999999")],
-        [InlineKeyboardButton("Любой бюджет",        callback_data="price_0_99999999")],
+        [InlineKeyboardButton("от 1.5М евро",        callback_data="price_1500000_999999999")],
+        [InlineKeyboardButton("Любой бюджет",        callback_data="price_0_999999999")],
     ]
     await q.edit_message_text("Бюджет:", reply_markup=InlineKeyboardMarkup(kb))
     return S_PRICE
