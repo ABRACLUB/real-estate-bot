@@ -14,7 +14,7 @@ from telegram.ext import (
     ContextTypes, ConversationHandler
 )
 
-BOT_TOKEN = os.environ.get("BOT_TOKEN")
+BOT_TOKEN = os.environ.get("8691313667:AAFtI9CUFia_Ew2_3vXLJ7Zivgy1C7Yzx0s")
 CHANNEL   = "@zats_denis"
 DB_FILE   = "properties.json"
 
