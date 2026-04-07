@@ -14,7 +14,7 @@ from telegram.ext import (
 )
 from telegram.error import BadRequest
 
-BOT_TOKEN = "8691313667:AAFtI9CUFia_Ew2_3vXLJ7Zivgy1C7Yzx0s"
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
 CHANNEL   = "@zats_denis"
 DB_FILE   = "properties.json"
 
@@ -282,8 +282,10 @@ def match(prop, f):
     if f.get("district") and f["district"] != "любой" and prop.get("district") != f["district"]: return False
     beds = f.get("bedrooms")
     if beds is not None and beds != -1 and beds not in prop.get("bedrooms", []): return False
-    if f.get("price_max") is not None and f["price_max"] != 999999999 and prop.get("price_from", 0) > f["price_max"]: return False
-    if f.get("price_min") is not None and f["price_min"] > 0 and prop.get("price_to", 999999999) < f["price_min"]: return False
+    # Price filter: selected range means "show everything UP TO the max price"
+    # e.g. user selects "400k-700k" → show all properties with price_from <= 700k
+    if f.get("price_max") is not None and f["price_max"] != 999999999:
+        if prop.get("price_from", 0) > f["price_max"]: return False
     return True
 
 def uniq(key):
