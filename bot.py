@@ -13,7 +13,7 @@ from telegram.ext import (
     ContextTypes, ConversationHandler
 )
 
-BOT_TOKEN = os.environ.get("BOT_TOKEN")
+BOT_TOKEN = os.environ.get("8691313667:AAFtI9CUFia_Ew2_3vXLJ7Zivgy1C7Yzx0s")
 CHANNEL   = "@zats_denis"
 DB_FILE   = "properties.json"
 
@@ -207,7 +207,8 @@ def parse_post(post_id, text, channel_username):
         return None
 
     title_match = re.match(r"^(.{10,80}?)[
-]", text)
+
+]", text)
     title = title_match.group(1).strip() if title_match else text[:60].strip()
 
     return {
