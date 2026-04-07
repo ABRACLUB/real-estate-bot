@@ -18,7 +18,7 @@ from telegram.ext import (
 # ─────────────────────────────────────────────
 # НАСТРОЙКИ
 # ─────────────────────────────────────────────
-BOT_TOKEN = os.environ.get("8691313667:AAFtI9CUFia_Ew2_3vXLJ7Zivgy1C7Yzx0s")
+BOT_TOKEN = "8691313667:AAFtI9CUFia_Ew2_3vXLJ7Zivgy1C7Yzx0s"
 CHANNEL   = "zats_denis"
 DB_FILE   = "properties.json"
 # Вставь свой ключ Anthropic для авто-парсинга новых постов
