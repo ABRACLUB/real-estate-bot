@@ -7,13 +7,14 @@ import logging
 import json
 import os
 import re
+import urllib.request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler,
     ContextTypes, ConversationHandler
 )
 
-BOT_TOKEN = "8691313667:AAFtI9CUFia_Ew2_3vXLJ7Zivgy1C7Yzx0s"
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
 CHANNEL   = "@zats_denis"
 DB_FILE   = "properties.json"
 
@@ -113,15 +114,15 @@ DEFAULT_PROPERTIES = [
     },
 ]
 
-# ─── Regex-парсер постов канала ───────────────────────────────────────────────
+# ─── Regex-парсер ─────────────────────────────────────────────────────────────
 
 CITY_KEYWORDS = {
-    "Лимассол":  ["лимассол", "limassol"],
-    "Пафос":     ["пафос", "paphos"],
-    "Никосия":   ["никосия", "nicosia"],
-    "Ларнака":   ["ларнака", "larnaca", "larnaka"],
-    "Айя-Напа":  ["айя-напа", "ayia napa"],
-    "Протарас":  ["протарас", "protaras"],
+    "Лимассол": ["лимассол", "limassol"],
+    "Пафос":    ["пафос", "paphos"],
+    "Никосия":  ["никосия", "nicosia"],
+    "Ларнака":  ["ларнака", "larnaca", "larnaka"],
+    "Айя-Напа": ["айя-напа", "ayia napa"],
+    "Протарас": ["протарас", "protaras"],
 }
 
 TYPE_KEYWORDS = {
@@ -133,8 +134,6 @@ TYPE_KEYWORDS = {
 }
 
 def parse_price(text):
-    """Извлекает минимальную цену из текста поста."""
-    # Ищем паттерны: от 317 000, от 317k, €317,000, 317 000 евро
     patterns = [
         r"от\s*([\d\s]+)\s*(?:000)?\s*(?:евро|€|eur)",
         r"от\s*([\d]+)[kк]\s*(?:евро|€|eur)?",
@@ -147,7 +146,6 @@ def parse_price(text):
             raw = m.group(1).replace(" ", "").replace(",", "")
             try:
                 val = int(raw)
-                # если число маленькое — это тысячи (например "317" → 317000)
                 if val < 10000:
                     val *= 1000
                 if 50000 < val < 50000000:
@@ -157,13 +155,10 @@ def parse_price(text):
     return None
 
 def parse_bedrooms(text):
-    """Извлекает список количества спален из текста."""
     beds = set()
-    # студия / studio
     if re.search(r"студи|studio", text, re.IGNORECASE):
         beds.add(0)
-    # 1 спальня, 1-bedroom, 1 сп
-    for m in re.finditer(r"(\d)\s*(?:спальн|сп|bedroom|br)", text, re.IGNORECASE):
+    for m in re.finditer(r"(\d)\s*(?:спальн|сп\b|bedroom|br\b)", text, re.IGNORECASE):
         n = int(m.group(1))
         if 0 <= n <= 6:
             beds.add(n)
@@ -175,7 +170,7 @@ def parse_city(text):
         for kw in keywords:
             if kw in text_lower:
                 return city
-    return "Лимассол"  # дефолт для канала
+    return "Лимассол"
 
 def parse_type(text):
     text_lower = text.lower()
@@ -186,7 +181,6 @@ def parse_type(text):
     return "апартаменты"
 
 def parse_ready(text):
-    """Ищет дату сдачи: Q1/2026, готов, сдан и т.п."""
     m = re.search(r"Q[1-4][\/\s]\d{4}", text, re.IGNORECASE)
     if m:
         return m.group(0)
@@ -195,22 +189,16 @@ def parse_ready(text):
     return "Уточняйте"
 
 def parse_post(post_id, text, channel_username):
-    """Парсит один пост канала и возвращает dict объекта или None."""
     if not text or len(text) < 30:
         return None
-    # Фильтруем нерелевантные посты
     if not re.search(r"евро|€|eur|спальн|вилл|апартамент|студи|таунхаус", text, re.IGNORECASE):
         return None
-
     price_from = parse_price(text)
     if not price_from:
         return None
-
-    title_match = re.match(r"^(.{10,80}?)[
-
-]", text)
-    title = title_match.group(1).strip() if title_match else text[:60].strip()
-
+    lines = text.strip().splitlines()
+    title = lines[0].strip() if lines else text[:60].strip()
+    title = title[:80]
     return {
         "id": post_id,
         "title": title,
@@ -221,38 +209,26 @@ def parse_post(post_id, text, channel_username):
         "price_from": price_from,
         "price_to": int(price_from * 2.5),
         "ready": parse_ready(text),
-        "link": "https://t.me/{}/{}".format(channel_username.lstrip("@"), post_id),
+        "link": "https://t.me/" + channel_username.lstrip("@") + "/" + str(post_id),
         "desc": text[:200].replace("\n", " "),
     }
 
 async def fetch_channel_posts(app, channel, last_id=0):
-    """Получает новые посты из канала через Bot API (getUpdates не подходит для каналов,
-    используем forwardFrom или просто читаем через getChatHistory если бот — админ)."""
     new_props = []
     try:
-        # Пробуем получить последние сообщения через копирование
-        # Бот должен быть подписчиком/админом канала
-        chat = await app.bot.get_chat(channel)
-        logger.info("Канал найден: %s", chat.title)
-        # Telegram Bot API не позволяет читать историю канала напрямую
-        # Поэтому используем публичный preview через t.me
-        import urllib.request
         channel_name = channel.lstrip("@")
-        url = "https://t.me/s/{}".format(channel_name)
+        url = "https://t.me/s/" + channel_name
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
         with urllib.request.urlopen(req, timeout=10) as resp:
             html = resp.read().decode("utf-8", errors="ignore")
 
-        # Извлекаем посты из HTML превью t.me/s/channel
-        post_blocks = re.findall(
-            r'data-post="{}/(\d+)".*?<div class="tgme_widget_message_text[^"]*"[^>]*>(.*?)</div>'.format(channel_name),
-            html, re.DOTALL
-        )
+        pattern = r'data-post="' + channel_name + r'/(\d+)".*?<div class="tgme_widget_message_text[^"]*"[^>]*>(.*?)</div>'
+        post_blocks = re.findall(pattern, html, re.DOTALL)
+
         for post_id_str, raw_html in post_blocks:
             post_id = int(post_id_str)
             if post_id <= last_id:
                 continue
-            # Убираем HTML теги
             text = re.sub(r"<[^>]+>", " ", raw_html)
             text = re.sub(r"&nbsp;", " ", text)
             text = re.sub(r"&amp;", "&", text)
@@ -262,10 +238,8 @@ async def fetch_channel_posts(app, channel, last_id=0):
             if prop:
                 new_props.append(prop)
                 logger.info("Распарсен пост #%d: %s", post_id, prop["title"])
-
     except Exception as e:
         logger.error("Ошибка при получении постов: %s", e)
-
     return new_props
 
 # ─── База данных ──────────────────────────────────────────────────────────────
@@ -282,8 +256,6 @@ def save_properties(props):
         json.dump(props, f, ensure_ascii=False, indent=2)
 
 PROPERTIES = load_properties()
-
-# ─── Вспомогательные функции ──────────────────────────────────────────────────
 
 def fmt(p):
     return "€{:,}".format(p).replace(",", " ")
@@ -307,11 +279,7 @@ def match(prop, f):
 def uniq(key):
     return sorted(set(p[key] for p in PROPERTIES if p.get(key)))
 
-# ─── Состояния диалога ────────────────────────────────────────────────────────
-
 S_TYPE, S_CITY, S_DISTRICT, S_BEDROOMS, S_PRICE = range(5)
-
-# ─── Хэндлеры ─────────────────────────────────────────────────────────────────
 
 async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     ctx.user_data.clear()
@@ -336,22 +304,17 @@ async def do_sync(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
     await q.edit_message_text("⏳ Проверяю канал на новые объекты...")
-
     existing_ids = {p["id"] for p in PROPERTIES}
     last_id = max(existing_ids) if existing_ids else 0
-
     new_props = await fetch_channel_posts(ctx.application, CHANNEL, last_id)
-
     added = 0
     for prop in new_props:
         if prop["id"] not in existing_ids:
             PROPERTIES.append(prop)
             existing_ids.add(prop["id"])
             added += 1
-
     if added:
         save_properties(PROPERTIES)
-
     msg = "✅ Готово! Добавлено новых: {}\nВсего в базе: {}".format(added, len(PROPERTIES))
     await q.edit_message_text(
         msg,
@@ -381,26 +344,28 @@ async def search_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     return await ask_type(q)
 
 async def ask_type(q):
-    kb = [[InlineKeyboardButton(t.capitalize(), callback_data="type_{}".format(t))] for t in uniq("type")]
+    kb = [[InlineKeyboardButton(t.capitalize(), callback_data="type_" + t)] for t in uniq("type")]
     kb.append([InlineKeyboardButton("Любой тип", callback_data="type_любой")])
     await q.edit_message_text("Тип объекта:", reply_markup=InlineKeyboardMarkup(kb))
     return S_TYPE
 
 async def got_type(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query; await q.answer()
+    q = update.callback_query
+    await q.answer()
     chosen_type = q.data.replace("type_", "")
     ctx.user_data["filters"]["type"] = chosen_type
     if chosen_type and chosen_type != "любой":
         cities = sorted(set(p["city"] for p in PROPERTIES if p.get("city") and p.get("type") == chosen_type))
     else:
         cities = uniq("city")
-    kb = [[InlineKeyboardButton(c, callback_data="city_{}".format(c))] for c in cities]
+    kb = [[InlineKeyboardButton(c, callback_data="city_" + c)] for c in cities]
     kb.append([InlineKeyboardButton("Любой город", callback_data="city_любой")])
     await q.edit_message_text("Город:", reply_markup=InlineKeyboardMarkup(kb))
     return S_CITY
 
 async def got_city(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query; await q.answer()
+    q = update.callback_query
+    await q.answer()
     val = q.data.replace("city_", "")
     ctx.user_data["filters"]["city"] = val
     chosen_city = val if val != "любой" else None
@@ -412,13 +377,14 @@ async def got_city(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         and (not chosen_city or p.get("city") == chosen_city)
         and (not chosen_type or p.get("type") == chosen_type)
     ))
-    kb = [[InlineKeyboardButton(d, callback_data="dist_{}".format(d))] for d in districts]
+    kb = [[InlineKeyboardButton(d, callback_data="dist_" + d)] for d in districts]
     kb.append([InlineKeyboardButton("Любой район", callback_data="dist_любой")])
     await q.edit_message_text("Район:", reply_markup=InlineKeyboardMarkup(kb))
     return S_DISTRICT
 
 async def got_district(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query; await q.answer()
+    q = update.callback_query
+    await q.answer()
     ctx.user_data["filters"]["district"] = q.data.replace("dist_", "")
     kb = [
         [InlineKeyboardButton("Студия",    callback_data="bed_0")],
@@ -432,25 +398,27 @@ async def got_district(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     return S_BEDROOMS
 
 async def got_bedrooms(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query; await q.answer()
+    q = update.callback_query
+    await q.answer()
     ctx.user_data["filters"]["bedrooms"] = int(q.data.replace("bed_", ""))
     kb = [
-        [InlineKeyboardButton("до 200 000 евро",   callback_data="price_0_200000")],
-        [InlineKeyboardButton("200k - 400k евро",  callback_data="price_200000_400000")],
-        [InlineKeyboardButton("400k - 700k евро",  callback_data="price_400000_700000")],
-        [InlineKeyboardButton("700k - 1.5М евро",  callback_data="price_700000_1500000")],
-        [InlineKeyboardButton("от 1.5М евро",      callback_data="price_1500000_999999999")],
-        [InlineKeyboardButton("Любой бюджет",      callback_data="price_0_999999999")],
+        [InlineKeyboardButton("до 200 000 евро",  callback_data="price_0_200000")],
+        [InlineKeyboardButton("200k - 400k евро", callback_data="price_200000_400000")],
+        [InlineKeyboardButton("400k - 700k евро", callback_data="price_400000_700000")],
+        [InlineKeyboardButton("700k - 1.5М евро", callback_data="price_700000_1500000")],
+        [InlineKeyboardButton("от 1.5М евро",     callback_data="price_1500000_999999999")],
+        [InlineKeyboardButton("Любой бюджет",     callback_data="price_0_999999999")],
     ]
     await q.edit_message_text("Бюджет:", reply_markup=InlineKeyboardMarkup(kb))
     return S_PRICE
 
 async def got_price(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query; await q.answer()
-    _, mn, mx = q.data.split("_")
+    q = update.callback_query
+    await q.answer()
+    parts = q.data.split("_")
     f = ctx.user_data["filters"]
-    f["price_min"] = int(mn)
-    f["price_max"] = int(mx)
+    f["price_min"] = int(parts[1])
+    f["price_max"] = int(parts[2])
     results = [p for p in PROPERTIES if match(p, f)]
     await send_results(q, results)
     return ConversationHandler.END
@@ -464,28 +432,20 @@ async def send_results(q, results):
             ]])
         )
         return
-
     text = "Найдено: {} объект(ов)\n\n".format(len(results))
     kb = []
     for p in results:
-        beds = ", ".join("студия" if b == 0 else "{} сп.".format(b) for b in p.get("bedrooms", []))
+        beds = ", ".join("студия" if b == 0 else str(b) + " сп." for b in p.get("bedrooms", []))
         text += (
-            "{}\n"
-            "Город: {}, {}\n"
-            "Спальни: {}\n"
-            "Цена: от {}\n"
-            "Ключи: {}\n"
-            "{}\n\n"
-        ).format(
-            p["title"],
-            p.get("city", ""), p.get("district", ""),
-            beds,
-            fmt(p["price_from"]),
-            p.get("ready", ""),
-            p.get("desc", "")
+            p["title"] + "\n"
+            "Город: " + p.get("city", "") + ", " + p.get("district", "") + "\n"
+            "Спальни: " + beds + "\n"
+            "Цена: от " + fmt(p["price_from"]) + "\n"
+            "Ключи: " + p.get("ready", "") + "\n"
+            + p.get("desc", "") + "\n\n"
         )
         short = p["title"][:38] + ("..." if len(p["title"]) > 38 else "")
-        kb.append([InlineKeyboardButton("Открыть: {}".format(short), url=p["link"])])
+        kb.append([InlineKeyboardButton("Открыть: " + short, url=p["link"])])
     kb.append([
         InlineKeyboardButton("Новый поиск", callback_data="search"),
         InlineKeyboardButton("Все объекты", callback_data="all"),
@@ -499,8 +459,6 @@ async def send_results(q, results):
 async def cancel(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Отменено. /start — начать заново")
     return ConversationHandler.END
-
-# ─── Запуск ───────────────────────────────────────────────────────────────────
 
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
