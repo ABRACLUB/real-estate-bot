@@ -14,7 +14,7 @@ from telegram.ext import (
 )
 from telegram.error import BadRequest
 
-BOT_TOKEN = "8691313667:AAFtI9CUFia_Ew2_3vXLJ7Zivgy1C7Yzx0s"
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
 CHANNEL   = "@zats_denis"
 DB_FILE   = "properties.json"
 
@@ -445,34 +445,34 @@ async def send_results(q, results):
         )
         return
 
-    # Send each property as a separate message with link right under description
-    await safe_edit(q, "Найдено: {} объект(ов)".format(len(results)),
-                    reply_markup=None)
-
-    chat_id = q.message.chat_id
     shown = results[:15]
+    await safe_edit(q, "Найдено: {} объект(ов). Пересылаю...".format(len(results)), reply_markup=None)
 
+    CHANNEL = "@zats_denis"
     for p in shown:
-        beds = ", ".join("студия" if b == 0 else str(b) + " сп." for b in p.get("bedrooms", []))
-        location = p.get("city", "")
-        if p.get("district"):
-            location += ", " + p["district"]
-        text = (
-            "🏠 <b>" + p["title"] + "</b>\n"
-            + "📍 " + location + "\n"
-            + "🛏 Спальни: " + beds + "\n"
-            + "💰 Цена: от " + fmt(p["price_from"]) + "\n"
-            + "🗓 Ключи: " + p.get("ready", "—") + "\n"
-            + "\n🔗 <a href=\"" + p["link"] + "\">Открыть объект</a>"
-        )
-        try:
-            await q.message.chat.send_message(text, parse_mode="HTML", disable_web_page_preview=True)
-        except Exception:
-            pass
+        # Extract message_id from link e.g. https://t.me/zats_denis/123 -> 123
+        import re as _re
+        m = _re.search(r"/zats_denis/(\d+)", p.get("link", ""))
+        if m:
+            msg_id = int(m.group(1))
+            try:
+                await q.message.chat.forward_from(chat_id=CHANNEL, message_id=msg_id)
+            except Exception:
+                # fallback: send as text with link
+                beds = ", ".join("студия" if b == 0 else str(b) + " сп." for b in p.get("bedrooms", []))
+                location = p.get("city", "") + (", " + p["district"] if p.get("district") else "")
+                text = (
+                    "🏠 <b>" + p["title"] + "</b>\n"
+                    + "📍 " + location + "\n"
+                    + "🛏 " + beds + "\n"
+                    + "💰 от " + fmt(p["price_from"]) + "\n"
+                    + "🗓 " + p.get("ready", "—") + "\n"
+                    + "\n🔗 <a href=\"" + p["link"] + "\">Открыть пост</a>"
+                )
+                await q.message.chat.send_message(text, parse_mode="HTML", disable_web_page_preview=False)
 
     if len(results) > 15:
-        extra = "...и ещё {} объектов. Уточните фильтры.".format(len(results) - 15)
-        await q.message.chat.send_message(extra)
+        await q.message.chat.send_message("...и ещё {} объектов. Уточните фильтры.".format(len(results) - 15))
 
     kb = [[
         InlineKeyboardButton("🔍 Новый поиск", callback_data="search"),
